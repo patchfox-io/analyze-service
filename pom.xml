@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>3.2.5</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+	
+	<groupId>io.patchfox.analyze_service</groupId>
+	<artifactId>analyze-service</artifactId>
+	<version>0.0.71</version>
+	<name>analyze-service</name>
+	<description>The analyze service is the static analysis step of the pipeline.</description>
+	
+	<properties>
+		<java.version>21</java.version>
+	</properties>
+
+	<repositories>
+		<repository>
+			<id>gitlab-maven</id>
+			<url>${CI_API_V4_URL}/groups/79509420/-/packages/maven</url>
+		</repository>
+	</repositories>
+
+	<!-- COMPILE -->
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+		
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>    
+    	
+		<dependency>
+      		<groupId>org.springframework.kafka</groupId>
+      		<artifactId>spring-kafka</artifactId>
+    	</dependency>		
+
+		<dependency>
+    		<groupId>org.springdoc</groupId>
+    		<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+    		<version>2.5.0</version>
+		</dependency>
+		
+		<dependency>
+  			<groupId>io.patchfox.utils</groupId>
+  			<artifactId>package-utils</artifactId>
+  			<version>1.0.9</version>			
+		</dependency>
+
+		<dependency>
+  			<groupId>io.patchfox.db-entities</groupId>
+  			<artifactId>db-entities</artifactId>
+  			<version>1.0.32</version>			
+		</dependency>
+
+		<dependency>
+      		<groupId>org.postgresql</groupId>
+      		<artifactId>postgresql</artifactId>
+      		<version>42.7.3</version>
+    	</dependency>
+    
+		<dependency>
+      		<groupId>org.hibernate.orm</groupId>
+      		<artifactId>hibernate-core</artifactId>
+      		<version>6.5.0.Final</version>
+    	</dependency>
+
+    	<dependency>
+      		<groupId>jakarta.annotation</groupId>
+      		<artifactId>jakarta.annotation-api</artifactId>
+      		<version>3.0.0</version>
+    	</dependency>
+
+	    <dependency>
+    	    <groupId>com.github.package-url</groupId>
+        	<artifactId>packageurl-java</artifactId>
+        	<version>1.5.0</version>
+    	</dependency>
+
+		<!-- PROVIDED -->
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<version>1.18.32</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<!-- TEST -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>com.google.cloud.tools</groupId>
+				<artifactId>jib-maven-plugin</artifactId>
+				<version>3.4.3</version>
+				<configuration>
+					<from>
+						<image>eclipse-temurin:21-jre</image>
+						<!-- <platforms>
+							<platform>
+								<architecture>amd64</architecture>
+								<os>linux</os>
+							</platform>
+							<platform>
+								<architecture>arm64</architecture>
+								<os>linux</os>
+							</platform>
+						</platforms> -->
+					</from>
+					<to>
+						<tags>
+							<tag>${project.version}</tag>
+							<tag>latest</tag>
+						</tags>
+						<image>${project.artifactId}</image>
+					</to>
+					<container>
+						<ports>
+							<port>7070</port>
+						</ports>
+					</container>
+					<containerizingMode>packaged</containerizingMode>
+				</configuration>
+				<!-- to prevent attempts to push the image to docker registry -->
+				<!-- <executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>build</goal>
+						</goals>
+					</execution>
+				</executions> -->
+			</plugin>
+			<plugin>
+				<groupId>com.github.victools</groupId>
+				<artifactId>jsonschema-maven-plugin</artifactId>
+				<version>4.35.0</version>
+				<executions>
+					<execution>
+						<id>jsonschema</id>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+					</execution>
+				</executions>
+				<configuration>
+					<schemaFilePath>src/main/resources/jsonschema</schemaFilePath>
+					<packageNames>com/davidholiday/*</packageNames>
+					<classpath>PROJECT_ONLY</classpath>
+					<failIfNoClassesMatch>false</failIfNoClassesMatch>
+				</configuration>
+			</plugin>
+			<!-- 
+				this generates the openapi spec in json format but only if the app is up
+				and running during the integration test phase.
+
+				see: 
+				https://github.com/springdoc/springdoc-openapi-maven-plugin/issues/6#issuecomment-1364034821
+
+				https://www.baeldung.com/spring-rest-openapi-documentation
+			-->
+			<!-- <plugin>
+				<groupId>org.springdoc</groupId>
+				<artifactId>springdoc-openapi-maven-plugin</artifactId>
+				<version>1.4</version>
+				<executions>
+					<execution>
+						<phase>integration-test</phase>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin> -->
+		</plugins>
+	</build>
+
+</project>
