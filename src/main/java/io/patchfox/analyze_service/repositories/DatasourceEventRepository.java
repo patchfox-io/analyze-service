@@ -35,6 +35,11 @@ public interface DatasourceEventRepository extends JpaRepository<DatasourceEvent
     List<DatasourceEvent> findAllByTxid(UUID txid);
 
     List<DatasourceEvent> findAllByCommitDateTime(ZonedDateTime commitDateTime);
+
+    List<DatasourceEvent> findAllByCommitDateTimeAndStatus(
+        ZonedDateTime commitDateTime, 
+        DatasourceEvent.Status status
+    );
     
 
 }

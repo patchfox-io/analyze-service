@@ -180,6 +180,13 @@ public class TabulateService {
 
         var datasourceEventIndexPage = datasourceEventIndexesByCommitDateAsc.subList(fromIndex, toIndex);
 
+        log.info(
+            "fromIndex: {}  toIndex: {}  datasourceEventIndexPage size: {}",
+            fromIndex,
+            toIndex,
+            datasourceEventIndexPage.size()
+        );
+
         var maxTabulateCacheSize = env.getMaxTabulateCacheSize();
 
         // find the dataset 
@@ -245,7 +252,10 @@ public class TabulateService {
 
         // pull the latest batch of records 
         var historicalDatasetMetricsRecordsByCommitDateDesc =
-            datasetMetricsRepository.findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
+        //     datasetMetricsRepository.findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
+        //         true, firstEventRecord.getCommitDateTime(), maxTabulateCacheSize
+        // );
+            tabulateServiceTransactionalHelpers.findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
                 true, firstEventRecord.getCommitDateTime(), maxTabulateCacheSize
         );
 
@@ -320,13 +330,43 @@ public class TabulateService {
             // datasourceMetrics table. 
             // also - we know all of these records will be present because they would have been created at the same 
             // time the datasetMetrics record was created. 
-            var previousDatasourceEvent = datasourceEventRepository.findAllByCommitDateTime(historicalCommitDateTime).getFirst();
+            
+            /*
+            
+            this is because of the fuckiest of fucky bugs. tl'dr - the logic in orchestrate service that 
+            ensures commitDateTime is unique only applies to datasourceEvent records THAT ARE CURRENTLY IN FLIGHT
+
+            meaning, on occasion, the call to find datasourceEvents by historical commitDateTime may pick up more than
+            one record if you don't also filter based on status = READY_FOR_NEXT_PROCESSING - which indicates the
+            datasourceMetricsRecord is IN FLIGHT and thus is guaranteed to be uniquely identified by commitDateTime 
+
+            11JAN26 DH 
+            */
+            // for (var dse : datasourceEventRepository.findAllByCommitDateTime(historicalCommitDateTime)) {
+            //     log.info(
+            //         "dse from unfiltered dse call is: {} {} {}", 
+            //         dse.getId(), 
+            //         dse.getPurl(), 
+            //         dse.getCommitDateTime());
+            // }
+            var previousDatasourceEvent = 
+                datasourceEventRepository.findAllByCommitDateTimeAndStatus(
+                    historicalCommitDateTime,
+                    DatasourceEvent.Status.READY_FOR_NEXT_PROCESSING
+                ).getFirst();
+            log.info(
+                "dse from filtered call is: {} {} {}", 
+                previousDatasourceEvent.getId(), 
+                previousDatasourceEvent.getPurl(), 
+                previousDatasourceEvent.getCommitDateTime()
+            );
             var previousDatasourcePurl = previousDatasourceEvent.getDatasource().getPurl();
 
             var previosDatasourceMetricsRecordId = 
                 datasourceMetricsRepository.findFirstByPurlOrderByCommitDateTimeDesc(previousDatasourcePurl)
                                            .get()
                                            .getId();
+
 
             previousDatasourceMetricsRecordIdsByDatasourcePurl.put(previousDatasourcePurl, previosDatasourceMetricsRecordId);
 
@@ -2121,19 +2161,39 @@ public class TabulateService {
                                                                     .flatMap(x -> x.stream())
                                                                     .collect(Collectors.toList());
             
-            if (!packagePurls.isEmpty()) {
-                // Get detailed findings with package information
-                var findingArrays = findingRepository.findSeverityAndIdentifierArraysByPurls(packagePurls);
+        //     if (!packagePurls.isEmpty()) {
+        //         // Get detailed findings with package information
+        //         var findingArrays = findingRepository.findSeverityAndIdentifierArraysByPurls(packagePurls);
                 
-                for (var findingArray : findingArrays) {
-                    var packageFinding = new String[]{
-                        String.valueOf(findingArray[2]), // packagePurl
-                        String.valueOf(findingArray[1]), // cveId  
-                        String.valueOf(findingArray[0])  // severity
-                    };
-                    currentPackageFindings.add(packageFinding);
+        //         for (var findingArray : findingArrays) {
+        //             var packageFinding = new String[]{
+        //                 String.valueOf(findingArray[2]), // packagePurl
+        //                 String.valueOf(findingArray[1]), // cveId  
+        //                 String.valueOf(findingArray[0])  // severity
+        //             };
+        //             currentPackageFindings.add(packageFinding);
+        //         }
+        //     }
+        // }
+
+            if (!packagePurls.isEmpty()) {
+                final int CHUNK_SIZE = 40_000; // safe under 65,535
+
+                for (int i = 0; i < packagePurls.size(); i += CHUNK_SIZE) {
+                    var chunk = packagePurls.subList(i, Math.min(i + CHUNK_SIZE, packagePurls.size()));
+
+                    var findingArrays = findingRepository.findSeverityAndIdentifierArraysByPurls(chunk);
+
+                    for (var findingArray : findingArrays) {
+                        var packageFinding = new String[]{
+                            String.valueOf(findingArray[2]), // packagePurl
+                            String.valueOf(findingArray[1]), // cveId
+                            String.valueOf(findingArray[0])  // severity
+                        };
+                        currentPackageFindings.add(packageFinding);
+                    }
                 }
-            }
+            }        
         }
 
         log.info("Processing {} current package-level findings for backlog age calculation", currentPackageFindings.size());
