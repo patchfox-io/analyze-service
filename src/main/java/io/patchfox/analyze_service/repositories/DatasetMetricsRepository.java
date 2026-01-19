@@ -15,7 +15,13 @@ import jakarta.transaction.Transactional;
 
 public interface DatasetMetricsRepository extends JpaRepository<DatasetMetrics, Long> {
 
-    long deleteByCommitDateTimeOrCommitDateTimeAfter(ZonedDateTime eventDateTime, ZonedDateTime eventDateTimeAfter);
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM DatasetMetrics dm WHERE dm.commitDateTime = :eventDateTime OR dm.commitDateTime >= :eventDateTimeAfter")
+    int deleteByCommitDateTimeOrCommitDateTimeAfter(
+        @Param("eventDateTime") ZonedDateTime eventDateTime,
+        @Param("eventDateTimeAfter") ZonedDateTime eventDateTimeAfter
+    );
 
     List<DatasetMetrics> findAllByIsCurrentAndCommitDateTimeAfterOrderByCommitDateTimeAsc(
         boolean isCurrent,

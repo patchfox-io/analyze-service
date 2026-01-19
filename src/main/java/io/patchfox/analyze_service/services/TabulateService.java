@@ -1056,32 +1056,46 @@ public class TabulateService {
                         var numberToRemove = historicalDatasetEditsByCommitDateAsc.size() - maxTabulateCacheSize;
 
                         log.info(
-                            "removing {} records with earliest commitDateTimes to keep cache size at or below: {}",
-                            numberToRemove,
-                            maxTabulateCacheSize
+                            "Cache size ({}) exceeds max ({}), need to remove {} records",
+                            historicalDatasetEditsByCommitDateAsc.size(),
+                            maxTabulateCacheSize,
+                            numberToRemove
                         );
 
-                        var historicalCommitDateTimes = 
+                        // Only evict entries older than 90 days from current processing date
+                        // to preserve data needed for backlog calculation
+                        var historicalCommitDateTimes =
                             historicalDatasetEditsByCommitDateAsc.keySet()
                                                                  .stream()
+                                                                 .filter(dt -> dt.isBefore(ninetyDaysPriorCommit))
                                                                  .sorted((x1, x2) -> x1.compareTo(x2))
-                                                                 .toList()
-                                                                 .subList(0, numberToRemove);
+                                                                 .toList();
 
-                        for (var historicalCommitDateTime : historicalCommitDateTimes) {
-                            historicalDatasetEditsByCommitDateAsc.remove(historicalCommitDateTime); 
-                            historicalPackagePurlsByDatasourcePurl.remove(historicalCommitDateTime);
-                            historicalFindingsByDatasourcePurl.remove(historicalCommitDateTime);
+                        if (historicalCommitDateTimes.size() >= numberToRemove) {
+                            // We have enough old entries (>90 days) to remove
+                            var entriesToRemove = historicalCommitDateTimes.subList(0, numberToRemove);
+                            log.info(
+                                "Removing {} records with commitDateTimes older than 90 days (earliest: {}, latest removed: {})",
+                                entriesToRemove.size(),
+                                entriesToRemove.get(0),
+                                entriesToRemove.get(entriesToRemove.size() - 1)
+                            );
 
-                            // // dig into reverse cache and remove the commit 
-                            // historicalPackagePurlsByDatasourcePurl.get(historicalCommitDateTime)
-                            //                                       .keySet()
-                            //                                       .stream()
-                            //                                       .forEach(
-                            //                                         x -> 
-                            //                                         datasourcePurlToCommitDateTimeMap.get(x)
-                            //                                                                          .remove(historicalCommitDateTime)
-                            //                                       );
+                            for (var historicalCommitDateTime : entriesToRemove) {
+                                historicalDatasetEditsByCommitDateAsc.remove(historicalCommitDateTime);
+                                historicalPackagePurlsByDatasourcePurl.remove(historicalCommitDateTime);
+                                historicalFindingsByDatasourcePurl.remove(historicalCommitDateTime);
+                            }
+                        } else {
+                            // Not enough old entries to remove - must keep cache oversized to preserve backlog data
+                            log.warn(
+                                "Cannot evict {} entries while preserving 90-day lookback window. " +
+                                "Only {} entries are older than 90 days. Keeping cache oversized at {}. " +
+                                "Consider increasing max-tabulate-cache-size configuration.",
+                                numberToRemove,
+                                historicalCommitDateTimes.size(),
+                                historicalDatasetEditsByCommitDateAsc.size()
+                            );
                         }
 
 
