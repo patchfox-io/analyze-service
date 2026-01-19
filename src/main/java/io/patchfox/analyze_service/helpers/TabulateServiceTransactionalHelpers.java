@@ -10,6 +10,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.hibernate.Hibernate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -182,13 +183,55 @@ public class TabulateServiceTransactionalHelpers {
     }
 
 
+    // COMMENTED OUT 2026-01-19 - replaced with version that ensures 90-day backlog coverage
+    // public List<DatasetMetrics> findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
+    //     boolean isCurrent,
+    //     ZonedDateTime commitDateTime,
+    //     int limit
+    // ) {
+    //     String sql = """
+    //         SELECT
+    //             dm.*,
+    //             d.id as dataset_id,
+    //             d.name as dataset_name,
+    //             d.latest_txid as dataset_latest_txid,
+    //             d.latest_job_id as dataset_latest_job_id,
+    //             d.updated_at as dataset_updated_at,
+    //             d.status as dataset_status
+    //         FROM dataset_metrics dm
+    //         INNER JOIN dataset d ON dm.dataset_id = d.id
+    //         WHERE dm.is_current = ?
+    //         AND dm.commit_date_time < ?
+    //         ORDER BY dm.commit_date_time DESC
+    //         LIMIT ?
+    //     """;
+    //
+    //     List<DatasetMetrics> metrics = jdbcTemplate.query(sql,
+    //         ps -> {
+    //             ps.setBoolean(1, isCurrent);
+    //             ps.setObject(2, commitDateTime.toOffsetDateTime());
+    //             ps.setInt(3, limit);
+    //         },
+    //         this::mapRowToDatasetMetrics
+    //     );
+    //
+    //     // Load relationship data for each metric
+    //     for (DatasetMetrics metric : metrics) {
+    //         loadPackageFamilies(metric);
+    //         loadPackageIndexes(metric);
+    //         loadEdits(metric);
+    //     }
+    //
+    //     return metrics;
+    // }
+
     public List<DatasetMetrics> findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
         boolean isCurrent,
         ZonedDateTime commitDateTime,
         int limit
     ) {
         String sql = """
-            SELECT 
+            SELECT
                 dm.*,
                 d.id as dataset_id,
                 d.name as dataset_name,
@@ -198,29 +241,81 @@ public class TabulateServiceTransactionalHelpers {
                 d.status as dataset_status
             FROM dataset_metrics dm
             INNER JOIN dataset d ON dm.dataset_id = d.id
-            WHERE dm.is_current = ? 
-            AND dm.commit_date_time < ? 
-            ORDER BY dm.commit_date_time DESC 
+            WHERE dm.is_current = ?
+            AND dm.commit_date_time < ?
+            ORDER BY dm.commit_date_time DESC
             LIMIT ?
         """;
-        
-        List<DatasetMetrics> metrics = jdbcTemplate.query(sql, 
+
+        List<DatasetMetrics> metrics = new java.util.ArrayList<>(jdbcTemplate.query(sql,
             ps -> {
                 ps.setBoolean(1, isCurrent);
                 ps.setObject(2, commitDateTime.toOffsetDateTime());
                 ps.setInt(3, limit);
             },
             this::mapRowToDatasetMetrics
-        );
-        
+        ));
+
+        // Check if we have 90-day coverage for backlog calculation
+        ZonedDateTime ninetyDaysAgo = commitDateTime.minusDays(90);
+        boolean hasNinetyDayCoverage = metrics.stream()
+            .anyMatch(m -> m.getCommitDateTime().isBefore(ninetyDaysAgo));
+
+        if (!hasNinetyDayCoverage && !metrics.isEmpty()) {
+            log.info("Cache missing 90-day coverage, fetching backlog anchor records");
+            List<DatasetMetrics> anchorRecords = fetchBacklogAnchorRecords(isCurrent, commitDateTime);
+            log.info("Fetched {} anchor records for 30/60/90 day backlog coverage", anchorRecords.size());
+
+            // Merge, avoiding duplicates
+            Set<Long> existingIds = metrics.stream()
+                .map(DatasetMetrics::getId)
+                .collect(Collectors.toSet());
+            for (DatasetMetrics anchor : anchorRecords) {
+                if (!existingIds.contains(anchor.getId())) {
+                    metrics.add(anchor);
+                }
+            }
+        }
+
         // Load relationship data for each metric
         for (DatasetMetrics metric : metrics) {
             loadPackageFamilies(metric);
             loadPackageIndexes(metric);
             loadEdits(metric);
         }
-        
+
         return metrics;
+    }
+
+    private List<DatasetMetrics> fetchBacklogAnchorRecords(boolean isCurrent, ZonedDateTime commitDateTime) {
+        // Get the closest record BEFORE each target date (30/60/90 days ago)
+        String anchorSql = """
+            SELECT * FROM (
+                SELECT DISTINCT ON (target_days)
+                    dm.*,
+                    d.id as dataset_id,
+                    d.name as dataset_name,
+                    d.latest_txid as dataset_latest_txid,
+                    d.latest_job_id as dataset_latest_job_id,
+                    d.updated_at as dataset_updated_at,
+                    d.status as dataset_status,
+                    target.days as target_days
+                FROM dataset_metrics dm
+                INNER JOIN dataset d ON dm.dataset_id = d.id
+                CROSS JOIN (VALUES (30), (60), (90)) AS target(days)
+                WHERE dm.is_current = ?
+                AND dm.commit_date_time < ? - (target.days || ' days')::interval
+                ORDER BY target_days, dm.commit_date_time DESC
+            ) sub
+        """;
+
+        return jdbcTemplate.query(anchorSql,
+            ps -> {
+                ps.setBoolean(1, isCurrent);
+                ps.setObject(2, commitDateTime.toOffsetDateTime());
+            },
+            this::mapRowToDatasetMetrics
+        );
     }
 
     private DatasetMetrics mapRowToDatasetMetrics(ResultSet rs, int rowNum) throws SQLException {
