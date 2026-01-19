@@ -1096,6 +1096,8 @@ public class TabulateService {
                                 historicalCommitDateTimes.size(),
                                 historicalDatasetEditsByCommitDateAsc.size()
                             );
+                            // Can't evict - break the loop to avoid infinite retries
+                            done = true;
                         }
 
 
