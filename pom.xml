@@ -12,7 +12,7 @@
 	
 	<groupId>io.patchfox.analyze_service</groupId>
 	<artifactId>analyze-service</artifactId>
-	<version>0.0.78</version>
+	<version>0.0.79</version>
 	<name>analyze-service</name>
 	<description>The analyze service is the static analysis step of the pipeline.</description>
 	
@@ -112,7 +112,7 @@
 			<plugin>
 				<groupId>com.google.cloud.tools</groupId>
 				<artifactId>jib-maven-plugin</artifactId>
-				<version>3.4.6</version>
+				<version>3.5.1</version>
 				<configuration>
 					<from>
 						<image>eclipse-temurin:21-jre</image>
