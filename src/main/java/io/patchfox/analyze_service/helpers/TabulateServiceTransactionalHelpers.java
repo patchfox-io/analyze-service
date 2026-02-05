@@ -89,20 +89,60 @@ public class TabulateServiceTransactionalHelpers {
 
 
 
+    // REPLACED WITH JDBC TO AVOID HIBERNATE N+1 AND FK CONSTRAINT ISSUES
+    // public void deleteMetricsByCommitDateTimeOrCommitDateTimeAfter(ZonedDateTime firstEventCommitDatetime) {
+    //     datasetMetricsRepository.deleteByCommitDateTimeOrCommitDateTimeAfter(
+    //         firstEventCommitDatetime, 
+    //         firstEventCommitDatetime
+    //     );
+    //
+    //     datasourceMetricsRepository.deleteByCommitDateTimeOrCommitDateTimeAfter(
+    //         firstEventCommitDatetime, 
+    //         firstEventCommitDatetime
+    //     );
+    //
+    //     datasourceMetricsCurrentRepository.deleteByCommitDateTimeOrCommitDateTimeAfter(
+    //         firstEventCommitDatetime, 
+    //         firstEventCommitDatetime
+    //     );
+    // }
+
     public void deleteMetricsByCommitDateTimeOrCommitDateTimeAfter(ZonedDateTime firstEventCommitDatetime) {
-        datasetMetricsRepository.deleteByCommitDateTimeOrCommitDateTimeAfter(
-            firstEventCommitDatetime, 
-            firstEventCommitDatetime
+        java.sql.Timestamp timestamp = java.sql.Timestamp.from(firstEventCommitDatetime.toInstant());
+
+        // Delete edits first to avoid FK constraint violation
+        jdbcTemplate.update(
+            "DELETE FROM edit WHERE commit_date_time = ? OR commit_date_time >= ?",
+            timestamp,
+            timestamp
         );
 
-        datasourceMetricsRepository.deleteByCommitDateTimeOrCommitDateTimeAfter(
-            firstEventCommitDatetime, 
-            firstEventCommitDatetime
+        // Delete package_family (has FK to dataset_metrics)
+        jdbcTemplate.update(
+            "DELETE FROM package_family WHERE dataset_metrics_id IN (SELECT id FROM dataset_metrics WHERE commit_date_time = ? OR commit_date_time >= ?)",
+            timestamp,
+            timestamp
         );
 
-        datasourceMetricsCurrentRepository.deleteByCommitDateTimeOrCommitDateTimeAfter(
-            firstEventCommitDatetime, 
-            firstEventCommitDatetime
+        // Delete dataset_metrics
+        jdbcTemplate.update(
+            "DELETE FROM dataset_metrics WHERE commit_date_time = ? OR commit_date_time >= ?",
+            timestamp,
+            timestamp
+        );
+
+        // Delete datasource_metrics
+        jdbcTemplate.update(
+            "DELETE FROM datasource_metrics WHERE commit_date_time = ? OR commit_date_time >= ?",
+            timestamp,
+            timestamp
+        );
+
+        // Delete datasource_metrics_current
+        jdbcTemplate.update(
+            "DELETE FROM datasource_metrics_current WHERE commit_date_time = ? OR commit_date_time >= ?",
+            timestamp,
+            timestamp
         );
     }
 
