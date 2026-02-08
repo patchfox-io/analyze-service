@@ -1,0 +1,91 @@
+--- REDIS CACHE INTEGRATION PATCH FOR TabulateService.java ---
+
+1. Add CacheService autowiring at the top with other @Autowired fields:
+
+    @Autowired
+    CacheService cacheService;
+
+
+2. REPLACE the cache hydration section (around line 290-690) with:
+
+        // ===== REDIS CACHE INTEGRATION: LOAD FROM REDIS FIRST =====
+        var cachedPackages = cacheService.loadPackageCache(datasetName, pageIndex);
+        var cachedFindings = cacheService.loadFindingCache(datasetName, pageIndex);
+        var cachedEdits = cacheService.loadEditCache(datasetName, pageIndex);
+
+        if (cachedPackages != null && cachedFindings != null && cachedEdits != null) {
+            log.info("*** CACHE HIT: Loaded all caches from Redis ***");
+            historicalPackagePurlsByDatasourcePurl = cachedPackages;
+            historicalFindingsByDatasourcePurl = cachedFindings;
+            historicalDatasetEditsByCommitDateAsc = new ConcurrentHashMap<>(cachedEdits);
+            
+            // Still need to set previousDatasetMetricsRecordId for continuity
+            if (!historicalDatasetMetricsRecordsByCommitDateAsc.isEmpty()) {
+                var historicalDatasetMetricsRecord = historicalDatasetMetricsRecordsByCommitDateDesc.getFirst();
+                currentHistoricalDatasetMetricsRecordOptional = Optional.of(historicalDatasetMetricsRecord);
+                previousDatasetMetricsRecordId = Optional.of(historicalDatasetMetricsRecord.getId());
+                
+                var historicalCommitDateTime = historicalDatasetMetricsRecord.getCommitDateTime();
+                var previousDatasourceEvent = 
+                    datasourceEventRepository.findAllByCommitDateTimeAndStatus(
+                        historicalCommitDateTime,
+                        DatasourceEvent.Status.READY_FOR_NEXT_PROCESSING
+                    ).getFirst();
+                var previousDatasourcePurl = previousDatasourceEvent.getDatasource().getPurl();
+                var previosDatasourceMetricsRecordId = 
+                    datasourceMetricsRepository.findFirstByPurlOrderByCommitDateTimeDesc(previousDatasourcePurl)
+                                               .get()
+                                               .getId();
+                previousDatasourceMetricsRecordIdsByDatasourcePurl.put(previousDatasourcePurl, previosDatasourceMetricsRecordId);
+            }
+        } else {
+            log.info("*** CACHE MISS: Hydrating caches from database ***");
+            
+            // EXISTING CACHE HYDRATION CODE GOES HERE (lines 290-690)
+            // ... all the existing cache population logic ...
+        }
+        // ===== END REDIS CACHE INTEGRATION =====
+
+
+3. ADD before the return statement (around line 1207):
+
+        // ===== REDIS CACHE INTEGRATION: SAVE TO REDIS =====
+        log.info("Saving caches to Redis for next page");
+        cacheService.saveCaches(
+            datasetName,
+            pageIndex,
+            historicalPackagePurlsByDatasourcePurl,
+            historicalFindingsByDatasourcePurl,
+            historicalDatasetEditsByCommitDateAsc
+        );
+        // ===== END REDIS CACHE INTEGRATION =====
+
+        return ApiResponse.builder()
+                          .txid(txid)
+                          .requestReceivedAt(requestReceivedAt)
+                          .code(statusCode)
+                          .data(data)
+                          .build();
+
+
+4. Add to pom.xml dependencies:
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+
+5. Add to application.properties:
+
+spring.data.redis.host=localhost
+spring.data.redis.port=6379
+spring.data.redis.timeout=60000
+
+
+NOTES:
+- Cache key format: "tabulate:{packages|findings|edits}:{datasetName}:{pageIndex}"
+- Redis will serialize the ConcurrentHashMaps using Jackson JSON
+- On cache hit, skips ~2-5 minutes of database queries
+- On cache miss, falls back to existing hydration logic
+- Caches are saved at end of each page for next page to use

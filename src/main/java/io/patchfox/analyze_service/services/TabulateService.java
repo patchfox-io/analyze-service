@@ -137,6 +137,9 @@ public class TabulateService {
     @Autowired
     private TransactionTemplate transactionTemplate;
 
+    @Autowired
+    CacheService cacheService;
+
     enum BacklogTimeBucket {
         THIRTY_TO_SIXTY_DAYS,
         SIXTY_TO_NINETY_DAYS,
@@ -307,7 +310,37 @@ public class TabulateService {
 
         Optional<DatasetMetrics> currentHistoricalDatasetMetricsRecordOptional = Optional.empty();
 
-        if ( !historicalDatasetMetricsRecordsByCommitDateAsc.isEmpty() ) {
+        // ===== REDIS CACHE INTEGRATION: TRY LOAD FROM REDIS FIRST =====
+        // Load cache from PREVIOUS page (pageIndex - 1) since current page hasn't been processed yet
+        var cachedPackages = pageIndex > 0 ? cacheService.loadPackageCache(datasetName, pageIndex - 1) : null;
+        var cachedFindings = pageIndex > 0 ? cacheService.loadFindingCache(datasetName, pageIndex - 1) : null;
+        var cachedEdits = pageIndex > 0 ? cacheService.loadEditCache(datasetName, pageIndex - 1) : null;
+
+        boolean cacheHit = (cachedPackages != null && cachedFindings != null && cachedEdits != null);
+
+        if (cacheHit) {
+            log.info("*** REDIS CACHE HIT: Loaded all caches from Redis for dataset: {}, page: {} (from page {}) ***", datasetName, pageIndex, pageIndex - 1);
+            historicalPackagePurlsByDatasourcePurl.putAll(cachedPackages);
+            historicalFindingsByDatasourcePurl.putAll(cachedFindings);
+            historicalDatasetEditsByCommitDateAsc.putAll(cachedEdits);
+            
+            // Populate currentPackagePurlsWithFindings - get all package PURLs from cached packages
+            // that appear in the findings map (meaning they have findings)
+            var allCachedPackagePurls = cachedPackages.values().stream()
+                .flatMap(m -> m.values().stream())
+                .flatMap(Set::stream)
+                .collect(Collectors.toSet());
+            
+            // Filter to only packages that have findings by checking if they're keys in the findings map
+            currentPackagePurlsWithFindings = allCachedPackagePurls.stream()
+                .filter(purl -> cachedFindings.values().stream()
+                    .anyMatch(m -> m.containsKey(purl)))
+                .collect(Collectors.toSet());
+            
+            log.info("Populated currentPackagePurlsWithFindings with {} packages from cache", currentPackagePurlsWithFindings.size());
+        }
+
+        if (!cacheHit && !historicalDatasetMetricsRecordsByCommitDateAsc.isEmpty() ) {
         //if ( !historicalDsmIdsAndCommitDateTimeAsc.isEmpty() ) {
             // because we want the oldest of the most recent [n] records NOT the oldest of the first [n] records. the 
             // latter creates problems that cause metrics to suddenly dip to near zero 
@@ -695,7 +728,8 @@ public class TabulateService {
             log.info("historicalDatasetMetricsRecordsByCommitDateAsc and entityManager flushed and cleared");
 
             log.info(">>>>>>>>>> total time to populate chaches: {}", Duration.between(startPopulateCaches, donePopulateEditCache));
-        }
+        } // end cache hydration block
+        // ===== END REDIS CACHE INTEGRATION =====
 
         // 
 
@@ -1203,6 +1237,22 @@ public class TabulateService {
         );
 
         entityManager.flush();
+
+        // ===== REDIS CACHE INTEGRATION: SAVE CACHES FOR NEXT PAGE =====
+        log.info("Saving caches to Redis for dataset: {}, page: {}", datasetName, pageIndex);
+        try {
+            cacheService.saveCaches(
+                datasetName,
+                pageIndex,
+                historicalPackagePurlsByDatasourcePurl,
+                historicalFindingsByDatasourcePurl,
+                historicalDatasetEditsByCommitDateAsc
+            );
+            log.info("Successfully saved caches to Redis");
+        } catch (Exception e) {
+            log.error("Failed to save caches to Redis (non-fatal, will rebuild on next page)", e);
+        }
+        // ===== END REDIS CACHE INTEGRATION =====
 
         return ApiResponse.builder()
                           .txid(txid)
