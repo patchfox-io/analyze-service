@@ -274,11 +274,12 @@ public class TabulateService {
 
         // PERFORMANCE FIX: Only fetch historical metrics if cache miss - otherwise wasted work
         List<DatasetMetrics> historicalDatasetMetricsRecordsByCommitDateAsc = new ArrayList<>();
+        List<DatasetMetrics> historicalDatasetMetricsRecordsByCommitDateDesc = new ArrayList<>();
         
         if (!cacheHit) {
             log.info("*** REDIS CACHE MISS: Fetching historical metrics from database for dataset: {}, page: {} ***", datasetName, pageIndex);
             // pull the latest batch of records 
-            var historicalDatasetMetricsRecordsByCommitDateDesc =
+            historicalDatasetMetricsRecordsByCommitDateDesc =
                 tabulateServiceTransactionalHelpers.findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
                     true, firstEventRecord.getCommitDateTime(), maxTabulateCacheSize
             );
