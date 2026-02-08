@@ -253,52 +253,6 @@ public class TabulateService {
         // );
 
 
-        // pull the latest batch of records 
-        var historicalDatasetMetricsRecordsByCommitDateDesc =
-        //     datasetMetricsRepository.findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
-        //         true, firstEventRecord.getCommitDateTime(), maxTabulateCacheSize
-        // );
-            tabulateServiceTransactionalHelpers.findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
-                true, firstEventRecord.getCommitDateTime(), maxTabulateCacheSize
-        );
-
-        var historicalDatasetMetricsRecordsByCommitDateAsc = historicalDatasetMetricsRecordsByCommitDateDesc.reversed();
-
-        //
-        //
-
-
-        // // because fuck postgres non iso complaint bullshit time shit ass nonsense - extract the actual zone
-        // List<Pair<Long, ZonedDateTime>> historicalDsmIdsAndCommitDateTimeAsc = jdbcTemplate.query(
-        //     "SELECT * FROM get_dsm_ids_and_commit_datetimes(?::TIMESTAMP WITH TIME ZONE)",
-        //     (rs, rowNum) -> {
-        //         long id = rs.getLong(1);
-                
-        //         // Get both the timestamp and the raw string to extract timezone
-        //         String timestampStr = rs.getString(2); // e.g., "2011-04-20 00:44:55+00"
-        //         Timestamp timestamp = rs.getTimestamp(2);
-                
-        //         // Extract timezone from the string (the "+00" part)
-        //         String timezoneStr = timestampStr.substring(timestampStr.lastIndexOf('+') >= 0 ? 
-        //             timestampStr.lastIndexOf('+') : timestampStr.lastIndexOf('-'));
-        //         ZoneOffset offset = ZoneOffset.of(timezoneStr.length() == 3 ? timezoneStr + ":00" : timezoneStr);
-                
-        //         // Create ZonedDateTime with the actual timezone from PostgreSQL
-        //         ZonedDateTime zonedDateTime = timestamp.toInstant().atZone(offset);
-        //         return new Pair<>(id, zonedDateTime);
-        //     },
-        //     firstEventRecord.getCommitDateTime().toString()
-        // );
-
-        // List<Pair<Long, ZonedDateTime>> historicalDsmIdsAndCommitDateTimeAsc = 
-        //     datasetMetricsRepository.findIdsAndCommitDateTimesByCommitDateTimeBefore(firstEventRecord.getCommitDateTime());
-
-
-        //
-        //
-
-
-
         // Map<ZonedDateTime, Set<Edit>> historicalDatasetEditsByCommitDateAsc = new HashMap<>();
         Map<ZonedDateTime, Set<Pair<String, String>>> historicalDatasetEditsByCommitDateAsc = new ConcurrentHashMap<>();
 
@@ -317,6 +271,19 @@ public class TabulateService {
         var cachedEdits = pageIndex > 0 ? cacheService.loadEditCache(datasetName, pageIndex - 1) : null;
 
         boolean cacheHit = (cachedPackages != null && cachedFindings != null && cachedEdits != null);
+
+        // PERFORMANCE FIX: Only fetch historical metrics if cache miss - otherwise wasted work
+        List<DatasetMetrics> historicalDatasetMetricsRecordsByCommitDateAsc = new ArrayList<>();
+        
+        if (!cacheHit) {
+            log.info("*** REDIS CACHE MISS: Fetching historical metrics from database for dataset: {}, page: {} ***", datasetName, pageIndex);
+            // pull the latest batch of records 
+            var historicalDatasetMetricsRecordsByCommitDateDesc =
+                tabulateServiceTransactionalHelpers.findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
+                    true, firstEventRecord.getCommitDateTime(), maxTabulateCacheSize
+            );
+            historicalDatasetMetricsRecordsByCommitDateAsc = historicalDatasetMetricsRecordsByCommitDateDesc.reversed();
+        }
 
         if (cacheHit) {
             log.info("*** REDIS CACHE HIT: Loaded all caches from Redis for dataset: {}, page: {} (from page {}) ***", datasetName, pageIndex, pageIndex - 1);
