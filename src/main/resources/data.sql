@@ -1353,6 +1353,9 @@ BEGIN
   CREATE INDEX IF NOT EXISTS idx_edit_commit_date_time 
   ON edit (commit_date_time);
   
+  CREATE INDEX IF NOT EXISTS idx_package_family_dataset_metrics_id
+  ON package_family (dataset_metrics_id);
+  
   RAISE NOTICE ''Edit indexes created successfully'';
 END;
 '
