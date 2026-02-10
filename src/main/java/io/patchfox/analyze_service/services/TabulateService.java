@@ -269,8 +269,9 @@ public class TabulateService {
         var cachedPackages = pageIndex > 0 ? cacheService.loadPackageCache(datasetName, pageIndex - 1) : null;
         var cachedFindings = pageIndex > 0 ? cacheService.loadFindingCache(datasetName, pageIndex - 1) : null;
         var cachedEdits = pageIndex > 0 ? cacheService.loadEditCache(datasetName, pageIndex - 1) : null;
+        var cachedPurlsWithFindings = pageIndex > 0 ? cacheService.loadPurlsWithFindingsCache(datasetName, pageIndex - 1) : null;
 
-        boolean cacheHit = (cachedPackages != null && cachedFindings != null && cachedEdits != null);
+        boolean cacheHit = (cachedPackages != null && cachedFindings != null && cachedEdits != null && cachedPurlsWithFindings != null);
 
         // PERFORMANCE FIX: Only fetch historical metrics if cache miss - otherwise wasted work
         List<DatasetMetrics> historicalDatasetMetricsRecordsByCommitDateAsc = new ArrayList<>();
@@ -292,18 +293,8 @@ public class TabulateService {
             historicalFindingsByDatasourcePurl.putAll(cachedFindings);
             historicalDatasetEditsByCommitDateAsc.putAll(cachedEdits);
             
-            // Populate currentPackagePurlsWithFindings - get all package PURLs from cached packages
-            // that appear in the findings map (meaning they have findings)
-            var allCachedPackagePurls = cachedPackages.values().stream()
-                .flatMap(m -> m.values().stream())
-                .flatMap(Set::stream)
-                .collect(Collectors.toSet());
-            
-            // Filter to only packages that have findings by checking if they're keys in the findings map
-            currentPackagePurlsWithFindings = allCachedPackagePurls.stream()
-                .filter(purl -> cachedFindings.values().stream()
-                    .anyMatch(m -> m.containsKey(purl)))
-                .collect(Collectors.toSet());
+            // Populate currentPackagePurlsWithFindings from cache
+            currentPackagePurlsWithFindings = cachedPurlsWithFindings;
             
             log.info("Populated currentPackagePurlsWithFindings with {} packages from cache", currentPackagePurlsWithFindings.size());
         }
@@ -1214,7 +1205,8 @@ public class TabulateService {
                 pageIndex,
                 historicalPackagePurlsByDatasourcePurl,
                 historicalFindingsByDatasourcePurl,
-                historicalDatasetEditsByCommitDateAsc
+                historicalDatasetEditsByCommitDateAsc,
+                currentPackagePurlsWithFindings
             );
             log.info("Successfully saved caches to Redis");
         } catch (Exception e) {

@@ -23,13 +23,15 @@ public class CacheService {
     private static final String PACKAGE_CACHE_KEY = "tabulate:packages:";
     private static final String FINDING_CACHE_KEY = "tabulate:findings:";
     private static final String EDIT_CACHE_KEY = "tabulate:edits:";
+    private static final String PURLS_WITH_FINDINGS_CACHE_KEY = "tabulate:purlsWithFindings:";
 
     public void saveCaches(
         String datasetName,
         Integer pageIndex,
         ConcurrentHashMap<ZonedDateTime, Map<String, Set<String>>> packageCache,
         ConcurrentHashMap<ZonedDateTime, Map<String, Set<Pair<CvssSeverity, String>>>> findingCache,
-        Map<ZonedDateTime, Set<Pair<String, String>>> editCache
+        Map<ZonedDateTime, Set<Pair<String, String>>> editCache,
+        Set<String> purlsWithFindingsCache
     ) {
         String key = datasetName + ":" + pageIndex;
         
@@ -41,12 +43,14 @@ public class CacheService {
             redisTemplate.delete(PACKAGE_CACHE_KEY + prevKey);
             redisTemplate.delete(FINDING_CACHE_KEY + prevKey);
             redisTemplate.delete(EDIT_CACHE_KEY + prevKey);
+            redisTemplate.delete(PURLS_WITH_FINDINGS_CACHE_KEY + prevKey);
             log.info("Deleted previous cache for page: {}", pageIndex - 1);
         }
         
         redisTemplate.opsForHash().put(PACKAGE_CACHE_KEY + key, "data", packageCache);
         redisTemplate.opsForHash().put(FINDING_CACHE_KEY + key, "data", findingCache);
         redisTemplate.opsForHash().put(EDIT_CACHE_KEY + key, "data", editCache);
+        redisTemplate.opsForHash().put(PURLS_WITH_FINDINGS_CACHE_KEY + key, "data", purlsWithFindingsCache);
         
         log.info("Caches saved to Redis");
     }
@@ -94,6 +98,22 @@ public class CacheService {
         if (cached != null) {
             log.info("Loaded edit cache from Redis for dataset: {}, page: {}", datasetName, pageIndex);
             return (Map<ZonedDateTime, Set<Pair<String, String>>>) cached;
+        }
+        
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    public Set<String> loadPurlsWithFindingsCache(
+        String datasetName,
+        Integer pageIndex
+    ) {
+        String key = datasetName + ":" + pageIndex;
+        Object cached = redisTemplate.opsForHash().get(PURLS_WITH_FINDINGS_CACHE_KEY + key, "data");
+        
+        if (cached != null) {
+            log.info("Loaded purls-with-findings cache from Redis for dataset: {}, page: {}", datasetName, pageIndex);
+            return (Set<String>) cached;
         }
         
         return null;
