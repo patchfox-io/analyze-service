@@ -205,6 +205,9 @@ public class TabulateService {
         // cache to keep track of what datasources have what package indexes as we enumerate and process events 
         var historicalPackagePurlsByDatasourcePurl = new ConcurrentHashMap<ZonedDateTime, Map<String, Set<String>>>();
 
+        // cache to store first appearance of package+CVE combinations for backlog calculation optimization
+        var backlogFirstAppearanceCache = new ConcurrentHashMap<String, ZonedDateTime>();
+
         /*
          * 
          * this presently is only ever used by two methods. the first that handles updating the current package set 
@@ -272,8 +275,9 @@ public class TabulateService {
         var cachedFindings = pageIndex > 0 ? cacheService.loadFindingCache(datasetName, pageIndex - 1) : null;
         var cachedEdits = pageIndex > 0 ? cacheService.loadEditCache(datasetName, pageIndex - 1) : null;
         var cachedPurlsWithFindings = pageIndex > 0 ? cacheService.loadPurlsWithFindingsCache(datasetName, pageIndex - 1) : null;
+        var cachedBacklogFirstAppearance = pageIndex > 0 ? cacheService.loadBacklogFirstAppearanceCache(datasetName, pageIndex - 1) : null;
 
-        boolean cacheHit = (cachedPackages != null && cachedFindings != null && cachedEdits != null && cachedPurlsWithFindings != null);
+        boolean cacheHit = (cachedPackages != null && cachedFindings != null && cachedEdits != null && cachedPurlsWithFindings != null && cachedBacklogFirstAppearance != null);
 
         // PERFORMANCE FIX: Only fetch historical metrics if cache miss - otherwise wasted work
         List<DatasetMetrics> historicalDatasetMetricsRecordsByCommitDateAsc = new ArrayList<>();
@@ -294,11 +298,13 @@ public class TabulateService {
             historicalPackagePurlsByDatasourcePurl.putAll(cachedPackages);
             historicalFindingsByDatasourcePurl.putAll(cachedFindings);
             historicalDatasetEditsByCommitDateAsc.putAll(cachedEdits);
+            backlogFirstAppearanceCache.putAll(cachedBacklogFirstAppearance);
             
             // Populate currentPackagePurlsWithFindings from cache
             currentPackagePurlsWithFindings = cachedPurlsWithFindings;
             
             log.info("Populated currentPackagePurlsWithFindings with {} packages from cache", currentPackagePurlsWithFindings.size());
+            log.info("Loaded backlog first appearance cache with {} entries", backlogFirstAppearanceCache.size());
         }
 
         if (!cacheHit && !historicalDatasetMetricsRecordsByCommitDateAsc.isEmpty() ) {
@@ -1208,9 +1214,10 @@ public class TabulateService {
                 historicalPackagePurlsByDatasourcePurl,
                 historicalFindingsByDatasourcePurl,
                 historicalDatasetEditsByCommitDateAsc,
-                currentPackagePurlsWithFindings
+                currentPackagePurlsWithFindings,
+                backlogFirstAppearanceCache
             );
-            log.info("Successfully saved caches to Redis");
+            log.info("Successfully saved caches to Redis (including {} backlog cache entries)", backlogFirstAppearanceCache.size());
         } catch (Exception e) {
             log.error("Failed to save caches to Redis (non-fatal, will rebuild on next page)", e);
         }
@@ -2274,28 +2281,40 @@ public class TabulateService {
             String cveId = currentPackageFinding[1];
             CvssSeverity severity = CvssSeverity.valueOf(currentPackageFinding[2]);
             
-            ZonedDateTime firstAppearance = historicalCves.get(cveId);
+            // Check cache first for this package+CVE combination
+            String cacheKey = packagePurl + ":" + cveId;
+            ZonedDateTime firstAppearance = backlogFirstAppearanceCache.get(cacheKey);
             
-            // Only check datasources that have this CVE
-            Map<String, ZonedDateTime> datasourcesWithCve = cveByDatasource.get(cveId);
-            if (datasourcesWithCve != null) {
-                Map<String, ZonedDateTime> datasourcesWithPkg = pkgByDatasource.get(packagePurl);
+            // If not in cache, do the full historical search
+            if (firstAppearance == null) {
+                firstAppearance = historicalCves.get(cveId);
                 
-                if (datasourcesWithPkg != null) {
-                    // Find earliest time this package+CVE combo existed in same datasource
-                    for (var dsEntry : datasourcesWithCve.entrySet()) {
-                        String dsKey = dsEntry.getKey();
-                        ZonedDateTime cveSeen = dsEntry.getValue();
-                        ZonedDateTime pkgSeen = datasourcesWithPkg.get(dsKey);
-                        
-                        if (pkgSeen != null) {
-                            // Both existed in this datasource - combo appeared at the later of the two
-                            ZonedDateTime comboSeen = cveSeen.isAfter(pkgSeen) ? cveSeen : pkgSeen;
-                            if (firstAppearance == null || comboSeen.isBefore(firstAppearance)) {
-                                firstAppearance = comboSeen;
+                // Only check datasources that have this CVE
+                Map<String, ZonedDateTime> datasourcesWithCve = cveByDatasource.get(cveId);
+                if (datasourcesWithCve != null) {
+                    Map<String, ZonedDateTime> datasourcesWithPkg = pkgByDatasource.get(packagePurl);
+                    
+                    if (datasourcesWithPkg != null) {
+                        // Find earliest time this package+CVE combo existed in same datasource
+                        for (var dsEntry : datasourcesWithCve.entrySet()) {
+                            String dsKey = dsEntry.getKey();
+                            ZonedDateTime cveSeen = dsEntry.getValue();
+                            ZonedDateTime pkgSeen = datasourcesWithPkg.get(dsKey);
+                            
+                            if (pkgSeen != null) {
+                                // Both existed in this datasource - combo appeared at the later of the two
+                                ZonedDateTime comboSeen = cveSeen.isAfter(pkgSeen) ? cveSeen : pkgSeen;
+                                if (firstAppearance == null || comboSeen.isBefore(firstAppearance)) {
+                                    firstAppearance = comboSeen;
+                                }
                             }
                         }
                     }
+                }
+                
+                // Cache the result for future lookups (only if we found a first appearance)
+                if (firstAppearance != null) {
+                    backlogFirstAppearanceCache.put(cacheKey, firstAppearance);
                 }
             }
             

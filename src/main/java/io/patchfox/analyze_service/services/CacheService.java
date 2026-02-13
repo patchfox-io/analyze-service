@@ -24,6 +24,7 @@ public class CacheService {
     private static final String FINDING_CACHE_KEY = "tabulate:findings:";
     private static final String EDIT_CACHE_KEY = "tabulate:edits:";
     private static final String PURLS_WITH_FINDINGS_CACHE_KEY = "tabulate:purlsWithFindings:";
+    private static final String BACKLOG_FIRST_APPEARANCE_CACHE_KEY = "tabulate:backlogFirstAppearance:";
 
     public void saveCaches(
         String datasetName,
@@ -31,7 +32,8 @@ public class CacheService {
         ConcurrentHashMap<ZonedDateTime, Map<String, Set<String>>> packageCache,
         ConcurrentHashMap<ZonedDateTime, Map<String, Set<Pair<CvssSeverity, String>>>> findingCache,
         Map<ZonedDateTime, Set<Pair<String, String>>> editCache,
-        Set<String> purlsWithFindingsCache
+        Set<String> purlsWithFindingsCache,
+        Map<String, ZonedDateTime> backlogFirstAppearanceCache
     ) {
         String key = datasetName + ":" + pageIndex;
         
@@ -44,6 +46,7 @@ public class CacheService {
             redisTemplate.delete(FINDING_CACHE_KEY + prevKey);
             redisTemplate.delete(EDIT_CACHE_KEY + prevKey);
             redisTemplate.delete(PURLS_WITH_FINDINGS_CACHE_KEY + prevKey);
+            redisTemplate.delete(BACKLOG_FIRST_APPEARANCE_CACHE_KEY + prevKey);
             log.info("Deleted previous cache for page: {}", pageIndex - 1);
         }
         
@@ -51,6 +54,7 @@ public class CacheService {
         redisTemplate.opsForHash().put(FINDING_CACHE_KEY + key, "data", findingCache);
         redisTemplate.opsForHash().put(EDIT_CACHE_KEY + key, "data", editCache);
         redisTemplate.opsForHash().put(PURLS_WITH_FINDINGS_CACHE_KEY + key, "data", purlsWithFindingsCache);
+        redisTemplate.opsForHash().put(BACKLOG_FIRST_APPEARANCE_CACHE_KEY + key, "data", backlogFirstAppearanceCache);
         
         log.info("Caches saved to Redis");
     }
@@ -114,6 +118,22 @@ public class CacheService {
         if (cached != null) {
             log.info("Loaded purls-with-findings cache from Redis for dataset: {}, page: {}", datasetName, pageIndex);
             return (Set<String>) cached;
+        }
+        
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, ZonedDateTime> loadBacklogFirstAppearanceCache(
+        String datasetName,
+        Integer pageIndex
+    ) {
+        String key = datasetName + ":" + pageIndex;
+        Object cached = redisTemplate.opsForHash().get(BACKLOG_FIRST_APPEARANCE_CACHE_KEY + key, "data");
+        
+        if (cached != null) {
+            log.info("Loaded backlog first appearance cache from Redis for dataset: {}, page: {}", datasetName, pageIndex);
+            return (Map<String, ZonedDateTime>) cached;
         }
         
         return null;
