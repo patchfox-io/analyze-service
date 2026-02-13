@@ -13,6 +13,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +27,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -864,7 +866,7 @@ public class TabulateService {
                                                                        .collect(Collectors.toSet());
 
                 // Break the package processing into manageable batches
-                int batchSize = 500; // Adjust based on testing
+                int batchSize = env.getPackageIndexBatchSize(); // Configurable via patchfox.tabulate.package-index-batch-size
                 List<String> packageList = new ArrayList<>(packageSet);
                 log.info(
                     "Processing {} packages for dataset metrics ID {}", 
@@ -2224,71 +2226,90 @@ public class TabulateService {
 
         log.info("Processing {} current package-level findings for backlog age calculation", currentPackageFindings.size());
 
-        // For each current package-level finding, find when that specific package+CVE combination first appeared
+        // Build indexes - O(h) with no Cartesian product
+        // Index 1: CVE first seen per datasource - Map<CVE, Map<Datasource, FirstSeen>>
+        Map<String, Map<String, ZonedDateTime>> cveByDatasource = new HashMap<>();
+        
+        // Index 2: Package first seen per datasource - Map<Package, Map<Datasource, FirstSeen>>
+        Map<String, Map<String, ZonedDateTime>> pkgByDatasource = new HashMap<>();
+        
+        // Index 3: HISTORICAL CVEs (global)
+        Map<String, ZonedDateTime> historicalCves = new HashMap<>();
+        
+        for (var historicalCommitDatetime : historicalCommitDateTimeAsc) {
+            if (!historicalFindingsByDatasourcePurl.containsKey(historicalCommitDatetime)) continue;
+            
+            var datasourceToFindingsMap = historicalFindingsByDatasourcePurl.get(historicalCommitDatetime);
+            var packagesByDatasource = historicalPackagePurlsByDatasourcePurl.get(historicalCommitDatetime);
+            
+            for (var entry : datasourceToFindingsMap.entrySet()) {
+                String dsKey = entry.getKey();
+                
+                if ("HISTORICAL".equals(dsKey)) {
+                    for (var finding : entry.getValue()) {
+                        historicalCves.putIfAbsent(finding.getRight(), historicalCommitDatetime);
+                    }
+                } else {
+                    // Index CVEs by datasource
+                    for (var finding : entry.getValue()) {
+                        String cveId = finding.getRight();
+                        cveByDatasource.computeIfAbsent(cveId, k -> new HashMap<>())
+                            .putIfAbsent(dsKey, historicalCommitDatetime);
+                    }
+                    
+                    // Index packages by datasource
+                    if (packagesByDatasource != null && packagesByDatasource.containsKey(dsKey)) {
+                        for (String pkg : packagesByDatasource.get(dsKey)) {
+                            pkgByDatasource.computeIfAbsent(pkg, k -> new HashMap<>())
+                                .putIfAbsent(dsKey, historicalCommitDatetime);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Lookup phase - O(n * d_relevant) where d_relevant = datasources with this CVE
         for (var currentPackageFinding : currentPackageFindings) {
             String packagePurl = currentPackageFinding[0];
             String cveId = currentPackageFinding[1];
             CvssSeverity severity = CvssSeverity.valueOf(currentPackageFinding[2]);
             
-            // Search backwards through historical data
-            ZonedDateTime firstAppearance = null;
-            for (var historicalCommitDatetime : historicalCommitDateTimeAsc) {
-                if (historicalFindingsByDatasourcePurl.containsKey(historicalCommitDatetime)) {
-                    var datasourceToFindingsMap = historicalFindingsByDatasourcePurl.get(historicalCommitDatetime);
-                    
-                    boolean foundPackageCveCombo = false;
-                    
-                    for (var entry : datasourceToFindingsMap.entrySet()) {
-                        String datasourceKey = entry.getKey();
+            ZonedDateTime firstAppearance = historicalCves.get(cveId);
+            
+            // Only check datasources that have this CVE
+            Map<String, ZonedDateTime> datasourcesWithCve = cveByDatasource.get(cveId);
+            if (datasourcesWithCve != null) {
+                Map<String, ZonedDateTime> datasourcesWithPkg = pkgByDatasource.get(packagePurl);
+                
+                if (datasourcesWithPkg != null) {
+                    // Find earliest time this package+CVE combo existed in same datasource
+                    for (var dsEntry : datasourcesWithCve.entrySet()) {
+                        String dsKey = dsEntry.getKey();
+                        ZonedDateTime cveSeen = dsEntry.getValue();
+                        ZonedDateTime pkgSeen = datasourcesWithPkg.get(dsKey);
                         
-                        if ("HISTORICAL".equals(datasourceKey)) {
-                            // For HISTORICAL entries, we can only check CVE ID (no package info)
-                            foundPackageCveCombo = entry.getValue().stream()
-                                .anyMatch(finding -> finding.getRight().equals(cveId));
-                        } else {
-                            // For real datasource entries, we can check if the package belongs to this datasource
-                            // AND if the CVE exists in this datasource's findings
-                            if (historicalPackagePurlsByDatasourcePurl.containsKey(historicalCommitDatetime)) {
-                                var packagesByDatasource = historicalPackagePurlsByDatasourcePurl.get(historicalCommitDatetime);
-                                
-                                if (packagesByDatasource.containsKey(datasourceKey) && 
-                                    packagesByDatasource.get(datasourceKey).contains(packagePurl)) {
-                                    // This package was in this datasource at this time
-                                    foundPackageCveCombo = entry.getValue().stream()
-                                        .anyMatch(finding -> finding.getRight().equals(cveId));
-                                }
+                        if (pkgSeen != null) {
+                            // Both existed in this datasource - combo appeared at the later of the two
+                            ZonedDateTime comboSeen = cveSeen.isAfter(pkgSeen) ? cveSeen : pkgSeen;
+                            if (firstAppearance == null || comboSeen.isBefore(firstAppearance)) {
+                                firstAppearance = comboSeen;
                             }
                         }
-                        
-                        if (foundPackageCveCombo) break;
-                    }
-                    
-                    if (foundPackageCveCombo) {
-                        firstAppearance = historicalCommitDatetime;
-                        break; // Found first appearance of this package+CVE combo
                     }
                 }
             }
             
-            // If no historical appearance found, it's brand new (< 30 days)
-            if (firstAppearance == null) {
-                continue; // Skip - not in any backlog bucket
-            }
+            if (firstAppearance == null) continue;
             
-            // Calculate age and put in appropriate bucket
             long daysBetween = ChronoUnit.DAYS.between(firstAppearance, currentCommitDateTime);
             
             if (daysBetween >= 90) {
-                var newValue = backlogNinetyMap.getOrDefault(severity, 0) + 1;
-                backlogNinetyMap.put(severity, newValue);
+                backlogNinetyMap.merge(severity, 1, Integer::sum);
             } else if (daysBetween >= 60) {
-                var newValue = backlogSixtyMap.getOrDefault(severity, 0) + 1;
-                backlogSixtyMap.put(severity, newValue);
+                backlogSixtyMap.merge(severity, 1, Integer::sum);
             } else if (daysBetween >= 30) {
-                var newValue = backlogThirtyMap.getOrDefault(severity, 0) + 1;
-                backlogThirtyMap.put(severity, newValue);
+                backlogThirtyMap.merge(severity, 1, Integer::sum);
             }
-            // else: < 30 days, not in backlog
         }
 
 

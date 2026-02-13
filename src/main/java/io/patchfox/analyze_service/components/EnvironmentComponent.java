@@ -30,4 +30,7 @@ public class EnvironmentComponent {
 
     @Value("${io.patchfox.analyze-service.max-tabulate-cache-size}")
     Integer maxTabulateCacheSize;
+
+    @Value("${patchfox.tabulate.package-index-batch-size:500}")
+    Integer packageIndexBatchSize;
 }
