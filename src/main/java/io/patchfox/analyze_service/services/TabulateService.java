@@ -791,7 +791,8 @@ public class TabulateService {
                     historicalPackagePurlsByDatasourcePurl,
                     historicalDatasetEditsByCommitDateAsc, 
                     datasetMetricsRecord,
-                    currentPackagePurlsWithFindings
+                    currentPackagePurlsWithFindings,
+                    backlogFirstAppearanceCache
                 );
                 log.info("done updateDatasetMetricsRecordWithCve");
 
@@ -1863,7 +1864,8 @@ public class TabulateService {
             ConcurrentHashMap<ZonedDateTime, Map<String, Set<String>>> historicalPackagePurlsByDatasourcePurl,
             Map<ZonedDateTime, Set<Pair<String, String>>> historicalDatasetEditsByCommitDateAsc,
             DatasetMetrics datasetMetricsRecord,
-            Set<String> currentPackagePurlsWithFindings
+            Set<String> currentPackagePurlsWithFindings,
+            ConcurrentHashMap<String, ZonedDateTime> backlogFirstAppearanceCache
     ) {
 
         var start = Instant.now();
