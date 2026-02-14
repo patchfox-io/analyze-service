@@ -891,18 +891,24 @@ public class TabulateService {
                 for (int i = 0; i < packageList.size(); i += batchSize) {
                     int endIndex = Math.min(i + batchSize, packageList.size());
                     List<String> batch = packageList.subList(i, endIndex);
+                    final String batchString = listToSqlArrayString(batch);
+                    final Long metricsId = datasetMetricsRecord.getId();
                     
                     try {
-                        packageRepository.tabulatePackageIndexDataBatched(
-                            listToSqlArrayString(batch),
-                            datasetMetricsRecord.getId(),
-                            ","
+                        jdbcTemplate.execute(
+                            "SELECT tabulate_package_index_data_batched(?, ?, ?)",
+                            (PreparedStatement ps) -> {
+                                ps.setString(1, batchString);
+                                ps.setLong(2, metricsId);
+                                ps.setString(3, ",");
+                                return ps.execute();
+                            }
                         );
                         
                         // Clear entity manager periodically to reduce memory pressure
                         //if (i % 2000 == 0 && i > 0) {
-                            entityManager.clear();
-                            System.gc();
+                        //    entityManager.clear();
+                        //    System.gc();
                         //}
                     } catch (Exception e) {
                         log.error("Error processing package batch {}-{}: {}", i, endIndex, e.getMessage());
@@ -2231,7 +2237,22 @@ public class TabulateService {
                 for (int i = 0; i < packagePurls.size(); i += CHUNK_SIZE) {
                     var chunk = packagePurls.subList(i, Math.min(i + CHUNK_SIZE, packagePurls.size()));
 
-                    var findingArrays = findingRepository.findSeverityAndIdentifierArraysByPurls(chunk);
+                    // Direct JDBC call instead of Hibernate for performance
+                    var chunkString = listToSqlArrayString(chunk);
+                    var findingArrays = jdbcTemplate.query(
+                        "SELECT fd.severity, f.identifier, p.purl " +
+                        "FROM package p " +
+                        "JOIN package_finding pf ON p.id = pf.package_id " +
+                        "JOIN finding f ON pf.finding_id = f.id " +
+                        "JOIN finding_data fd ON f.id = fd.finding_id " +
+                        "WHERE p.purl = ANY(string_to_array(?, ','))",
+                        (rs, rowNum) -> new Object[]{
+                            rs.getString(1), // severity
+                            rs.getString(2), // identifier
+                            rs.getString(3)  // purl
+                        },
+                        chunkString
+                    );
 
                     for (var findingArray : findingArrays) {
                         var packageFinding = new String[]{
