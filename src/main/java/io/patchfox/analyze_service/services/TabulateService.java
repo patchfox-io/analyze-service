@@ -820,7 +820,16 @@ public class TabulateService {
                                                              .flatMap(x -> x.stream())
                                                              .toList();
 
-                var packageIndexes = packageRepository.getIdsForPurls(listToSqlArrayString(purlList));
+                // JDBC: Get package IDs for dataset-level packages (preserving duplicates)
+                List<Long> packageIndexes = jdbcTemplate.query(
+                    "SELECT p.id " +
+                    "FROM package p " +
+                    "JOIN unnest(string_to_array(?, ',')) WITH ORDINALITY AS purls(value, idx) " +
+                    "ON p.purl = purls.value " +
+                    "ORDER BY purls.idx",
+                    (rs, rowNum) -> rs.getLong("id"),
+                    listToSqlArrayString(purlList)
+                );
                 datasetMetricsRecord.setPackageIndexes(packageIndexes);
                 datasetMetricsRecord.setPackages(packageIndexes.size());
 
@@ -841,30 +850,48 @@ public class TabulateService {
                 // input-service doesn't necessarily get events in temporal order 
                 // analyze has to handle this - or input has to work differently
                 // mystery solved. 
-                //var datasourceRecord = currentDatasourceEventRecord.getDatasource();
-                var datasourceRecord = datasourceRepository.findById(currentDatasourceEventRecord.getDatasource().getId()).get();
-                var datasourcePurlList = datasourcePurlToPackagePurlMap.get(datasourceRecord.getPurl())
+                //
+                var datasourcePurl = currentDatasourceEventRecord.getDatasource().getPurl();
+                var datasourcePurlList = datasourcePurlToPackagePurlMap.get(datasourcePurl)
                                                                        .stream()
                                                                        .toList();
 
-                var datasourcePackageIndexes = packageRepository.getIdsForPurls(listToSqlArrayString(datasourcePurlList));
-                datasourceRecord.setPackageIndexes(datasourcePackageIndexes);
-                // this should not be necessary but w/o it hibernate breaks the assocation between datasource and dataset
-                // and it makes baby kittens cry and die a horrible death and why do you want to cause hurt to a kitty? 
-                // ok maybe not kitty death but it does make it so we can't see what datasources are attached to a given
-                // dataset anymore and that breaks all the things. So we force hibernate to load the collection so 
-                // it doesn't stomp on it when we serialize the datasource record. 
-                log.info("dataset assocations are: {}", datasourceRecord.getDatasets().stream().map(d -> d.getName()).toList());
-                datasourceRecord = datasourceRepository.save(datasourceRecord);
+                // JDBC: Get package IDs for datasource-level packages (preserving duplicates)
+                List<Long> datasourcePackageIndexes = jdbcTemplate.query(
+                    "SELECT p.id " +
+                    "FROM package p " +
+                    "JOIN unnest(string_to_array(?, ',')) WITH ORDINALITY AS purls(value, idx) " +
+                    "ON p.purl = purls.value " +
+                    "ORDER BY purls.idx",
+                    (rs, rowNum) -> rs.getLong("id"),
+                    listToSqlArrayString(datasourcePurlList)
+                );
 
-                // update datasourceEvent record to mark it as analyzed
+                // JDBC: Update datasource.package_indexes directly
+                String datasourcePackageIndexesArray = datasourcePackageIndexes.toString()
+                                                                               .replace("[", "{")
+                                                                               .replace("]", "}");
+                jdbcTemplate.update(
+                    "UPDATE datasource SET package_indexes = ?::bigint[] WHERE id = ?",
+                    datasourcePackageIndexesArray,
+                    currentDatasourceEventRecord.getDatasource().getId()
+                );
+
+                // JDBC: Update datasource_event record to mark it as analyzed
                 currentDatasourceEventRecord.setAnalyzed(true);
                 currentDatasourceEventRecord.setStatus(DatasourceEvent.Status.READY_FOR_NEXT_PROCESSING);
-                //datasourceEventRepository.save(currentDatasourceEventRecord);
                 datasourceEventJdbcRepository.updateDatasourceEvent(currentDatasourceEventRecord);
 
-                // and save the dataset metrics record 
-                datasetMetricsRecord = datasetMetricsRepository.save(datasetMetricsRecord);   
+                // JDBC: Update dataset_metrics.package_indexes directly
+                String packageIndexesArray = packageIndexes.toString()
+                                                          .replace("[", "{")
+                                                          .replace("]", "}");
+                jdbcTemplate.update(
+                    "UPDATE dataset_metrics SET package_indexes = ?::bigint[], packages = ? WHERE id = ?",
+                    packageIndexesArray,
+                    packageIndexes.size(),
+                    datasetMetricsRecord.getId()
+                );
 
                 log.debug("datasetMetricsRecord patches near end is: {}", datasetMetricsRecord.getPatches());
                 
@@ -926,7 +953,7 @@ public class TabulateService {
 
 
                 // create the datasourceMetrics record
-                var currentDatasourcePurl = datasourceRecord.getPurl();
+                var currentDatasourcePurl = currentDatasourceEventRecord.getDatasource().getPurl();
 
                 var previousDatasourceMetricsRecordId = 
                     Optional.ofNullable(previousDatasourceMetricsRecordIdsByDatasourcePurl.get(currentDatasourcePurl));
@@ -939,7 +966,7 @@ public class TabulateService {
                 );      
                 log.info("created datasourceMetricsRecord with id: {}", datasourceMetricsRecordId);
                 previousDatasetMetricsRecordId = Optional.of(datasetMetricsRecord.getId());
-                previousDatasourceMetricsRecordIdsByDatasourcePurl.put(datasourceRecord.getPurl(), datasourceMetricsRecordId);
+                previousDatasourceMetricsRecordIdsByDatasourcePurl.put(currentDatasourceEventRecord.getDatasource().getPurl(), datasourceMetricsRecordId);
 
 
                 // create datasourceMetricsCurrent record
