@@ -772,6 +772,7 @@ public class TabulateService {
     
                 log.info("base dsm record created. starting record processing run...");
 
+                var startPackageEdits = Instant.now();
                 //
                 datasetMetricsRecord = updateCachesAndMetricsRecordWithPackageEdits(
                     historicalFindingsByDatasourcePurl,
@@ -782,6 +783,7 @@ public class TabulateService {
                 );
     
                 log.info("done updateCachesAndMetricsRecordWithPackageEdits");
+                log.info("TIMING: Package edits processing took {}ms", Duration.between(startPackageEdits, Instant.now()).toMillis());
         
 
                 //  handle all the package and findings and findings backlog tabulation
@@ -1998,6 +2000,7 @@ public class TabulateService {
 
 
         log.info("update and fetch edit and dsm duration: {}", Duration.between(startUpdateAndFetch, Instant.now()));
+        log.info("TIMING: Update edit and fetch DSM took {}ms", Duration.between(startUpdateAndFetch, Instant.now()).toMillis());
 
 
 
@@ -2389,6 +2392,7 @@ public class TabulateService {
         var doneBacklogFindings = Instant.now();
         log.info("tally backlog findings duration: {}", Duration.between(doneCurrentFindings, doneBacklogFindings));
         log.info("total time updateDatasetMetricsRecordWithCve: {}",  Duration.between(start, doneBacklogFindings));
+        log.info("TIMING: CVE processing took {}ms", Duration.between(start, doneBacklogFindings).toMillis());
 
         return datasetMetricsRecord;
     }
@@ -2548,6 +2552,7 @@ public class TabulateService {
         var start = Instant.now();
         if (previousDatasetMetricsRecordOptional.isEmpty()) { 
             log.info("total duration for updateDatasetMetricsRecordWithRpsAndPes: {}", Duration.between(start, Instant.now()));
+            log.info("TIMING: RPS/PES processing took {}ms", Duration.between(start, Instant.now()).toMillis());
             return datasetMetricsRecord; 
         }
 
@@ -2675,6 +2680,7 @@ log.debug("packageFamily keys are: {}", packageFamilyMap.keySet());
         datasetMetricsRecord.setPatchEfficacyScore(pes);
         
         log.info("total duration for updateDatasetMetricsRecordWithRpsAndPes: {}", Duration.between(start, Instant.now()));
+        log.info("TIMING: RPS/PES processing took {}ms", Duration.between(start, Instant.now()).toMillis());
         return datasetMetricsRecord;
     }
 

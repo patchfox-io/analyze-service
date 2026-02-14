@@ -16,19 +16,20 @@ BEGIN
     -- Get the dataset metrics record once
     SELECT * FROM dataset_metrics dsm INTO dataset_metrics_tmp WHERE dsm.id = datasource_metrics_id_arg;
     
-    -- Process this batch using a set-based approach
+    -- Process this batch counting instances (duplicates matter)
+    -- For each purl in the array, count it separately even if it appears multiple times
     SELECT
-        COUNT(CASE WHEN p.number_versions_behind_head > 0 THEN 1 END) AS downlevel_count,
-        COUNT(CASE WHEN p.number_major_versions_behind_head > 0 THEN 1 END) AS downlevel_major_count,
-        COUNT(CASE WHEN p.number_minor_versions_behind_head > 0 THEN 1 END) AS downlevel_minor_count,
-        COUNT(CASE WHEN p.number_patch_versions_behind_head > 0 THEN 1 END) AS downlevel_patch_count,
-        COUNT(CASE WHEN p.most_recent_version_published_at < NOW()::DATE - interval ''6 months'' THEN 1 END) AS stale_six_months_count,
-        COUNT(CASE WHEN p.most_recent_version_published_at < NOW()::DATE - interval ''12 months'' THEN 1 END) AS stale_one_year_count,
-        COUNT(CASE WHEN p.most_recent_version_published_at < NOW()::DATE - interval ''18 months'' THEN 1 END) AS stale_eighteen_months_count,
-        COUNT(CASE WHEN p.most_recent_version_published_at < NOW()::DATE - interval ''24 months'' THEN 1 END) AS stale_two_years_count
+        SUM(CASE WHEN p.number_versions_behind_head > 0 THEN 1 ELSE 0 END) AS downlevel_count,
+        SUM(CASE WHEN p.number_major_versions_behind_head > 0 THEN 1 END) AS downlevel_major_count,
+        SUM(CASE WHEN p.number_minor_versions_behind_head > 0 THEN 1 END) AS downlevel_minor_count,
+        SUM(CASE WHEN p.number_patch_versions_behind_head > 0 THEN 1 END) AS downlevel_patch_count,
+        SUM(CASE WHEN p.most_recent_version_published_at < NOW()::DATE - interval ''6 months'' THEN 1 ELSE 0 END) AS stale_six_months_count,
+        SUM(CASE WHEN p.most_recent_version_published_at < NOW()::DATE - interval ''12 months'' THEN 1 ELSE 0 END) AS stale_one_year_count,
+        SUM(CASE WHEN p.most_recent_version_published_at < NOW()::DATE - interval ''18 months'' THEN 1 ELSE 0 END) AS stale_eighteen_months_count,
+        SUM(CASE WHEN p.most_recent_version_published_at < NOW()::DATE - interval ''24 months'' THEN 1 ELSE 0 END) AS stale_two_years_count
     INTO batch_counts
-    FROM package p
-    WHERE p.purl = ANY(purls_arg) AND p.most_recent_version IS NOT NULL;
+    FROM unnest(purls_arg) WITH ORDINALITY AS u(purl_element, idx)
+    LEFT JOIN package p ON p.purl = u.purl_element AND p.most_recent_version IS NOT NULL;
     
     -- Update the metrics by adding to existing values (accumulating)
     UPDATE dataset_metrics dsm
