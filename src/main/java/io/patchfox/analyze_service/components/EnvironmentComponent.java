@@ -28,7 +28,7 @@ public class EnvironmentComponent {
     @Value("${spring.kafka.group-name}")
     String kafkaGroupName;
 
-    @Value("${io.patchfox.analyze-service.max-tabulate-cache-size}")
+    @Value("${patchfox.analyze-service.max-tabulate-cache-size}")
     Integer maxTabulateCacheSize;
 
     @Value("${patchfox.tabulate.package-index-batch-size:500}")

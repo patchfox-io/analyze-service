@@ -872,16 +872,16 @@ public class TabulateService {
                     Duration.between(startPostProcessing, Instant.now()).toMillis());
 
                 // now update package-index enrichment data in that dataset_metrics record by way of db stored procedure 
-                var packageSet = historicalPackagePurlsByDatasourcePurl.get(currentCommitDateTime)
+                // Keep duplicates - the stored proc counts each occurrence separately
+                var packageList = historicalPackagePurlsByDatasourcePurl.get(currentCommitDateTime)
                                                                        .values()
                                                                        .stream()
                                                                        .flatMap(x -> x.stream())
-                                                                       .collect(Collectors.toSet());
+                                                                       .collect(Collectors.toList());
 
                 // Break the package processing into manageable batches
                 var startPackageIndexTabulation = Instant.now();
                 int batchSize = env.getPackageIndexBatchSize(); // Configurable via patchfox.tabulate.package-index-batch-size
-                List<String> packageList = new ArrayList<>(packageSet);
                 log.info(
                     "Processing {} packages for dataset metrics ID {}", 
                     packageList.size(), 
@@ -894,7 +894,7 @@ public class TabulateService {
                     
                     try {
                         packageRepository.tabulatePackageIndexDataBatched(
-                            setToSqlArrayString(new HashSet<>(batch)),
+                            listToSqlArrayString(batch),
                             datasetMetricsRecord.getId(),
                             ","
                         );
