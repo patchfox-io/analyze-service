@@ -811,6 +811,7 @@ public class TabulateService {
                 );
                 log.info("done updateDatasetMetricsRecordWithRpsAndPes");
                 
+                var startPostProcessing = Instant.now();
                 // add indexes for all packages associated with this dataset_metrics record
                 var datasourcePurlToPackagePurlMap = historicalPackagePurlsByDatasourcePurl.get(currentCommitDateTime);
 
@@ -866,6 +867,9 @@ public class TabulateService {
                 datasetMetricsRecord = datasetMetricsRepository.save(datasetMetricsRecord);   
 
                 log.debug("datasetMetricsRecord patches near end is: {}", datasetMetricsRecord.getPatches());
+                
+                log.info("TIMING: Post-processing (package IDs, save records) took {}ms", 
+                    Duration.between(startPostProcessing, Instant.now()).toMillis());
 
                 // now update package-index enrichment data in that dataset_metrics record by way of db stored procedure 
                 var packageSet = historicalPackagePurlsByDatasourcePurl.get(currentCommitDateTime)
@@ -875,6 +879,7 @@ public class TabulateService {
                                                                        .collect(Collectors.toSet());
 
                 // Break the package processing into manageable batches
+                var startPackageIndexTabulation = Instant.now();
                 int batchSize = env.getPackageIndexBatchSize(); // Configurable via patchfox.tabulate.package-index-batch-size
                 List<String> packageList = new ArrayList<>(packageSet);
                 log.info(
@@ -904,6 +909,10 @@ public class TabulateService {
                         // Consider whether to throw the exception or continue with next batch
                     }
                 }
+                
+                log.info("TIMING: Package index tabulation took {}ms for {} packages", 
+                    Duration.between(startPackageIndexTabulation, Instant.now()).toMillis(),
+                    packageList.size());
                 
                 currentHistoricalDatasetMetricsRecordOptional = Optional.of(datasetMetricsRecord);
                 createdRecordIdsAscByDate.add(datasetMetricsRecord.getId());      
