@@ -1268,6 +1268,17 @@ public class TabulateService {
         }
         // ===== END REDIS CACHE INTEGRATION =====
 
+
+        // CLEAR CACHE OBJECTS SO THEY DON'T HANG OUT IN OLD-GEN 
+        historicalPackagePurlsByDatasourcePurl.clear();
+        historicalFindingsByDatasourcePurl.clear();
+        historicalDatasetEditsByCommitDateAsc.clear();
+        currentPackagePurlsWithFindings.clear();
+        backlogFirstAppearanceCache.clear();
+
+        // encourage gc to run
+        System.gc();
+
         return ApiResponse.builder()
                           .txid(txid)
                           .requestReceivedAt(requestReceivedAt)
