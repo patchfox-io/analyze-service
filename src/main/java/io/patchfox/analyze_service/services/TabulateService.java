@@ -554,8 +554,39 @@ public class TabulateService {
                     //if ( !historicalFindingsByDatasourcePurl.containsKey(record.getRight()) ) {
                         log.info("updating historical findings and package cache for commit datetime: {}", record.getCommitDateTime());
                         String packageIdsString = listLongToSqlArrayString(record.getPackageIndexes());
-                        var packagePurls = packageRepository.filterPackageIdsWithFindings(packageIdsString);
-                        var findingsPairs = new HashSet<>(findingRepository.findSeverityAndIdentifierByPackagePurlIds(packagePurls, new HashSet<>()));
+                        
+                        // JDBC replacement for packageRepository.filterPackageIdsWithFindings
+                        List<String> packagePurls = jdbcTemplate.query(
+                            "SELECT unnest(filter_purls_with_findings(" +
+                            "  (SELECT string_agg(p.purl, ',') " +
+                            "   FROM package p " +
+                            "   WHERE p.id = ANY(string_to_array(?::text, ',')::bigint[]))" +
+                            "))",
+                            (rs, rowNum) -> rs.getString(1),
+                            packageIdsString
+                        );
+                        
+                        // JDBC replacement for findingRepository.findSeverityAndIdentifierByPackagePurlIds
+                        Set<Pair<CvssSeverity, String>> findingsPairs;
+                        if (packagePurls.isEmpty()) {
+                            findingsPairs = new HashSet<>();
+                        } else {
+                            String purlsArray = String.join(",", packagePurls);
+                            findingsPairs = new HashSet<>(jdbcTemplate.query(
+                                "SELECT fd.severity, fd.identifier " +
+                                "FROM unnest(string_to_array(?::text, ',')) AS purl_list(purl) " +
+                                "INNER JOIN package p ON p.purl = purl_list.purl " +
+                                "INNER JOIN package_finding pf ON p.id = pf.package_id " +
+                                "INNER JOIN finding f ON pf.finding_id = f.id " +
+                                "INNER JOIN finding_data fd ON f.id = fd.finding_id",
+                                (rs, rowNum) -> new Pair<>(
+                                    CvssSeverity.valueOf(rs.getString(1)),
+                                    rs.getString(2)
+                                ),
+                                purlsArray
+                            ));
+                        }
+                        
                         historicalFindingsByDatasourcePurl.put(record.getCommitDateTime(), Map.of("HISTORICAL", findingsPairs));
                         // log.info("updating historicalFindings cache for commit datetime: {}", record.getRight());
                         // var dsmRecord = datasetMetricsRepository.findById(record.getLeft()).get();
@@ -567,7 +598,16 @@ public class TabulateService {
                         // Group packages by datasource (we need to reconstruct the datasource->packages map)
                         // For simplicity, we can put all packages under a single "HISTORICAL" key similar to findings
                         // OR better: fetch datasource info for each package and group properly
-                        var allPackagePurls = packageRepository.findPurlsByIds(packageIdsString); // Need all packages, not just ones with findings
+                        
+                        // JDBC replacement for packageRepository.findPurlsByIds
+                        List<String> allPackagePurls = jdbcTemplate.query(
+                            "SELECT p.purl " +
+                            "FROM unnest(string_to_array(?::text, ',')::bigint[]) WITH ORDINALITY AS input(id, ord) " +
+                            "JOIN package p ON p.id = input.id " +
+                            "ORDER BY input.ord",
+                            (rs, rowNum) -> rs.getString(1),
+                            packageIdsString
+                        ); // Need all packages, not just ones with findings
                         var packageMap = new ConcurrentHashMap<String, Set<String>>();
                         packageMap.put("HISTORICAL", new HashSet<String>(allPackagePurls));
                         historicalPackagePurlsByDatasourcePurl.put(record.getCommitDateTime(), packageMap);
