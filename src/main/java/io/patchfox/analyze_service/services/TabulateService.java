@@ -1034,6 +1034,8 @@ public class TabulateService {
                 log.info("historicalFindingsByDatasourcePurl size is: {}", historicalFindingsByDatasourcePurl.size());
  
                 var ninetyDaysPriorCommit = datasetMetricsRecord.getCommitDateTime().minusDays(90);
+                var sixtyDaysPriorCommit = datasetMetricsRecord.getCommitDateTime().minusDays(60);
+                var thirtyDaysPriorCommit = datasetMetricsRecord.getCommitDateTime().minusDays(30);
 
                 // // // before we do anything else we need to make sure we retain the latest commit for any given datasource
                 // // // so we don't lose the package information and thus fuck up our numbers 
@@ -1137,7 +1139,7 @@ public class TabulateService {
                         //                                                                          .remove(earliestCommit)
                         //                                       );
 
-                    } else if (historicalDatasetEditsByCommitDateAsc.size() > maxTabulateCacheSize) {// && okToRemove) {
+                    } else if (historicalDatasetEditsByCommitDateAsc.size() > maxTabulateCacheSize) {
 
                         var numberToRemove = historicalDatasetEditsByCommitDateAsc.size() - maxTabulateCacheSize;
 
@@ -1148,20 +1150,62 @@ public class TabulateService {
                             numberToRemove
                         );
 
-                        // Only evict entries older than 90 days from current processing date
-                        // to preserve data needed for backlog calculation
-                        var historicalCommitDateTimes =
-                            historicalDatasetEditsByCommitDateAsc.keySet()
-                                                                 .stream()
-                                                                 .filter(dt -> dt.isBefore(ninetyDaysPriorCommit))
-                                                                 .sorted((x1, x2) -> x1.compareTo(x2))
+                        var allCommitDateTimes = historicalDatasetEditsByCommitDateAsc.keySet()
+                                                                                      .stream()
+                                                                                      .sorted()
+                                                                                      .toList();
+                        
+                        var entriesToRemove = new ArrayList<ZonedDateTime>();
+                        
+                        // Bucket 1: Remove records older than 90 days (oldest first), keep at least one
+                        var bucket90Plus = allCommitDateTimes.stream()
+                                                             .filter(dt -> dt.isBefore(ninetyDaysPriorCommit))
+                                                             .sorted()
+                                                             .toList();
+                        
+                        int canRemove90 = Math.max(0, bucket90Plus.size() - 1); // Keep at least 1
+                        int toRemove90 = Math.min(canRemove90, numberToRemove);
+                        entriesToRemove.addAll(bucket90Plus.subList(0, toRemove90));
+                        
+                        // Bucket 2: Remove records between 60-90 days (oldest first), keep at least one
+                        if (entriesToRemove.size() < numberToRemove) {
+                            var bucket60to90 = allCommitDateTimes.stream()
+                                                                 .filter(dt -> dt.isAfter(ninetyDaysPriorCommit) && dt.isBefore(sixtyDaysPriorCommit))
+                                                                 .sorted()
                                                                  .toList();
-
-                        if (historicalCommitDateTimes.size() >= numberToRemove) {
-                            // We have enough old entries (>90 days) to remove
-                            var entriesToRemove = historicalCommitDateTimes.subList(0, numberToRemove);
+                            
+                            int canRemove = Math.max(0, bucket60to90.size() - 1); // Keep at least 1
+                            int toRemove = Math.min(canRemove, numberToRemove - entriesToRemove.size());
+                            entriesToRemove.addAll(bucket60to90.subList(0, toRemove));
+                        }
+                        
+                        // Bucket 3: Remove records between 30-60 days (oldest first), keep at least one
+                        if (entriesToRemove.size() < numberToRemove) {
+                            var bucket30to60 = allCommitDateTimes.stream()
+                                                                 .filter(dt -> dt.isAfter(sixtyDaysPriorCommit) && dt.isBefore(thirtyDaysPriorCommit))
+                                                                 .sorted()
+                                                                 .toList();
+                            
+                            int canRemove = Math.max(0, bucket30to60.size() - 1); // Keep at least 1
+                            int toRemove = Math.min(canRemove, numberToRemove - entriesToRemove.size());
+                            entriesToRemove.addAll(bucket30to60.subList(0, toRemove));
+                        }
+                        
+                        // Bucket 4: Remove records between 0-30 days (oldest first), keep at least one (the most recent)
+                        if (entriesToRemove.size() < numberToRemove) {
+                            var bucket0to30 = allCommitDateTimes.stream()
+                                                                .filter(dt -> dt.isAfter(thirtyDaysPriorCommit))
+                                                                .sorted()
+                                                                .toList();
+                            
+                            int canRemove = Math.max(0, bucket0to30.size() - 1); // Keep at least 1 (most recent)
+                            int toRemove = Math.min(canRemove, numberToRemove - entriesToRemove.size());
+                            entriesToRemove.addAll(bucket0to30.subList(0, toRemove));
+                        }
+                        
+                        if (entriesToRemove.size() > 0) {
                             log.info(
-                                "Removing {} records with commitDateTimes older than 90 days (earliest: {}, latest removed: {})",
+                                "Removing {} records (earliest: {}, latest removed: {})",
                                 entriesToRemove.size(),
                                 entriesToRemove.get(0),
                                 entriesToRemove.get(entriesToRemove.size() - 1)
@@ -1173,19 +1217,13 @@ public class TabulateService {
                                 historicalFindingsByDatasourcePurl.remove(historicalCommitDateTime);
                             }
                         } else {
-                            // Not enough old entries to remove - must keep cache oversized to preserve backlog data
                             log.warn(
-                                "Cannot evict {} entries while preserving 90-day lookback window. " +
-                                "Only {} entries are older than 90 days. Keeping cache oversized at {}. " +
-                                "Consider increasing max-tabulate-cache-size configuration.",
-                                numberToRemove,
-                                historicalCommitDateTimes.size(),
+                                "Cannot evict any entries while preserving anchor points (90/60/30 days + most recent). " +
+                                "Keeping cache oversized at {}. Consider increasing max-tabulate-cache-size configuration.",
                                 historicalDatasetEditsByCommitDateAsc.size()
                             );
-                            // Can't evict - break the loop to avoid infinite retries
                             done = true;
                         }
-
 
                     }
                     else { 
