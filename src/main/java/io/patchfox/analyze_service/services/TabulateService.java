@@ -305,6 +305,16 @@ public class TabulateService {
             
             log.info("Populated currentPackagePurlsWithFindings with {} packages from cache", currentPackagePurlsWithFindings.size());
             log.info("Loaded backlog first appearance cache with {} entries", backlogFirstAppearanceCache.size());
+            
+            // Set previousDatasetMetricsRecordId to the most recent dataset_metrics before this page
+            var previousDatasetMetrics = tabulateServiceTransactionalHelpers
+                .findAllByIsCurrentAndCommitDateTimeBeforeOrderByCommitDateTimeDesc(
+                    true, firstEventRecord.getCommitDateTime(), 1
+                );
+            if (!previousDatasetMetrics.isEmpty()) {
+                previousDatasetMetricsRecordId = Optional.of(previousDatasetMetrics.get(0).getId());
+                log.info("Set previousDatasetMetricsRecordId to {} from cache hit", previousDatasetMetricsRecordId.get());
+            }
         }
 
         if (!cacheHit && !historicalDatasetMetricsRecordsByCommitDateAsc.isEmpty() ) {
@@ -3417,22 +3427,22 @@ log.debug("packageFamily keys are: {}", packageFamilyMap.keySet());
         log.info(
             "Creating datasource metrics record - " +
                 "datasourceEvent: {}, " +
-                "previousDatasourceMetrics: {}, " +
                 "currentDatasetMetrics: {}, " +
-                "previousDatasetMetrics: {}", 
+                "previousDatasetMetrics: {}, " +
+                "previousDatasourceMetrics: {}", 
             datasourceEventRecordId, 
-            previousDatasourceMetricsId, 
             datasetMetricsRecordId, 
-            previousDatasetMetricsId
+            previousDatasetMetricsId,
+            previousDatasourceMetricsId
         );
         
         return jdbcTemplate.queryForObject(
             "SELECT create_datasource_metrics_record(?, ?, ?, ?)",
             Long.class,
             datasourceEventRecordId,
-            previousDatasourceMetricsId,
             datasetMetricsRecordId,
-            previousDatasetMetricsId
+            previousDatasetMetricsId,
+            previousDatasourceMetricsId
         );
     }
 

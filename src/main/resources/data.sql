@@ -1366,9 +1366,9 @@ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION create_datasource_metrics_record(
     p_datasource_event_id BIGINT,
-    p_previous_datasource_metrics_id BIGINT,
     p_current_dataset_metrics_id BIGINT,
-    p_previous_dataset_metrics_id BIGINT
+    p_previous_dataset_metrics_id BIGINT,
+    p_previous_datasource_metrics_id BIGINT
 )
 RETURNS BIGINT
 LANGUAGE plpgsql
@@ -1376,8 +1376,8 @@ AS '
 DECLARE
     new_datasource_metrics_id BIGINT;
 BEGIN
-    -- If no previous datasource metrics, just use current values (first record scenario)
-    IF p_previous_datasource_metrics_id IS NULL THEN
+    -- If no previous dataset metrics, just use current values (first record scenario)
+    IF p_previous_dataset_metrics_id IS NULL THEN
         INSERT INTO datasource_metrics (
             datasource_event_count, commit_date_time, event_date_time, txid, job_id, purl,
             total_findings, critical_findings, high_findings, medium_findings, low_findings,
