@@ -1590,7 +1590,8 @@ public class TabulateService {
         // // Re-fetch to get stored proc's changes
         // datasetMetricsRecord = datasetMetricsRepository.findById(datasetMetricsRecord.getId()).get();
 
-        entityManager.refresh(datasetMetricsRecord);
+        // Already reloaded via JDBC above, no need to refresh again
+        // entityManager.refresh(datasetMetricsRecord);
         log.debug("datasetMetricsRecord patches is now: {}", datasetMetricsRecord.getPatches());
         return datasetMetricsRecord;
     }
