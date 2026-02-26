@@ -12,7 +12,7 @@
 	
 	<groupId>io.patchfox.analyze_service</groupId>
 	<artifactId>analyze-service</artifactId>
-	<version>0.0.103</version>
+	<version>0.0.104</version>
 	<name>analyze-service</name>
 	<description>The analyze service is the static analysis step of the pipeline.</description>
 	
@@ -69,7 +69,7 @@
 		<dependency>
   			<groupId>io.patchfox.db-entities</groupId>
   			<artifactId>db-entities</artifactId>
-  			<version>1.0.33</version>			
+  			<version>1.0.34</version>			
 		</dependency>
 
 		<dependency>

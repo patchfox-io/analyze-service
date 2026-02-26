@@ -803,7 +803,6 @@ public class TabulateService {
                                                          .datasourceEventCount(historicalEventCount)
                                                          //.dataset(datasetRepository.save(datasetRecord))
                                                          .dataset(datasetRecord)
-                                                         .packageFamilies(new HashSet<String>())
                                                          .edits(new HashSet<Edit>())
                                                          .isCurrent(true)
                                                          .patches(0)
@@ -1496,8 +1495,8 @@ public class TabulateService {
 
         // log.info("entity manager flushed and cleared - now retrieving new dsm record...");
         // datasetMetricsRecord = datasetMetricsRepository.findById(datasetMetricsRecord.getId()).get();
-        log.info("done with stored procedure. refreshing entity manager...");
-        entityManager.refresh(datasetMetricsRecord);
+        log.info("done with stored procedure. reloading dataset metrics via JDBC...");
+        datasetMetricsRecord = tabulateServiceTransactionalHelpers.reloadDatasetMetricsById(datasetMetricsRecord.getId());
 
         log.info("Stored procedure completed. Total patches: {}, Same patches: {}", 
                 editStatistics.totalPatches(), editStatistics.samePatches());
@@ -2758,8 +2757,6 @@ log.debug("packageFamily keys are: {}", packageFamilyMap.keySet());
         var rps =  ((double)redundantPackageTypeCount / (double)totalPackageTypeCount) * 100;
         log.info("setting RPS score to: {}", rps);
         datasetMetricsRecord.setRpsScore(rps);
-
-        datasetMetricsRecord.setPackageFamilies(new HashSet<>(packageFamilyMap.keySet()));
 
 
         //

@@ -117,13 +117,6 @@ public class TabulateServiceTransactionalHelpers {
             timestamp
         );
 
-        // Delete package_family (has FK to dataset_metrics)
-        jdbcTemplate.update(
-            "DELETE FROM package_family WHERE dataset_metrics_id IN (SELECT id FROM dataset_metrics WHERE commit_date_time = ? OR commit_date_time >= ?)",
-            timestamp,
-            timestamp
-        );
-
         // Delete dataset_metrics
         jdbcTemplate.update(
             "DELETE FROM dataset_metrics WHERE commit_date_time = ? OR commit_date_time >= ?",
@@ -319,7 +312,6 @@ public class TabulateServiceTransactionalHelpers {
 
         // Load relationship data for each metric
         for (DatasetMetrics metric : metrics) {
-            loadPackageFamilies(metric);
             loadPackageIndexes(metric);
             loadEdits(metric);
         }
@@ -444,12 +436,28 @@ public class TabulateServiceTransactionalHelpers {
         return value != null ? Dataset.Status.valueOf(value) : null;
     }
 
-    private void loadPackageFamilies(DatasetMetrics metrics) {
-        String sql = "SELECT package_family FROM package_family WHERE dataset_metrics_id = ?";
-        Set<String> families = new HashSet<>(
-            jdbcTemplate.queryForList(sql, String.class, metrics.getId())
-        );
-        metrics.setPackageFamilies(families);
+    public DatasetMetrics reloadDatasetMetricsById(Long id) {
+        String sql = """
+            SELECT
+                dm.*,
+                d.id as dataset_id,
+                d.name as dataset_name,
+                d.latest_txid as dataset_latest_txid,
+                d.latest_job_id as dataset_latest_job_id,
+                d.updated_at as dataset_updated_at,
+                d.status as dataset_status
+            FROM dataset_metrics dm
+            INNER JOIN dataset d ON dm.dataset_id = d.id
+            WHERE dm.id = ?
+            """;
+        
+        DatasetMetrics metrics = jdbcTemplate.queryForObject(sql, this::mapRowToDatasetMetrics, id);
+        
+        // Load relationships
+        loadPackageIndexes(metrics);
+        loadEdits(metrics);
+        
+        return metrics;
     }
 
     private void loadPackageIndexes(DatasetMetrics metrics) {
