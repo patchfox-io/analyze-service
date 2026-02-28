@@ -996,6 +996,10 @@ public class TabulateService {
                     Duration.between(startPackageIndexTabulation, Instant.now()).toMillis(),
                     packageList.size());
                 
+                // Reload the dataset metrics record to get the updated downlevel counts from the stored proc
+                log.info("Reloading dataset metrics via JDBC after package index tabulation...");
+                datasetMetricsRecord = tabulateServiceTransactionalHelpers.reloadDatasetMetricsById(datasetMetricsRecord.getId());
+                
                 currentHistoricalDatasetMetricsRecordOptional = Optional.of(datasetMetricsRecord);
                 createdRecordIdsAscByDate.add(datasetMetricsRecord.getId());      
 
