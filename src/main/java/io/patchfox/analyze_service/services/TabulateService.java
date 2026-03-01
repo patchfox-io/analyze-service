@@ -879,8 +879,17 @@ public class TabulateService {
                     (rs, rowNum) -> rs.getLong("id"),
                     listToSqlArrayString(purlList)
                 );
-                datasetMetricsRecord.setPackageIndexes(packageIndexes);
-                datasetMetricsRecord.setPackages(packageIndexes.size());
+                //
+                // *MORE MESS CODE i KNOW - THIS IS COMMENTED OUT BECAUSE IT'S REDUNDANT 
+                // THE REMAINING OPERATIONS ON DATASET_METRICS ARE DONE BY WAY OF JDBC TO THE DB DIRECTLY 
+                // SO WE NEED TO FLUSH THINGS HERE SO LATER WHEN WE FLUSH AT THE END WE DON'T OVERWRITE 
+                // ANYTHING WITH STALE DATA IN DATASET_METRICS 
+                // 
+                // datasetMetricsRecord.setPackageIndexes(packageIndexes);
+                // datasetMetricsRecord.setPackages(packageIndexes.size());
+                entityManager.flush();
+                entityManager.detach(datasetMetricsRecord);
+                log.info("Flushed and detached datasetMetricsRecord - subsequent updates via JDBC only");
 
 
                 //
